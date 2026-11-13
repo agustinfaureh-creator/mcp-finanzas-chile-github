@@ -16,7 +16,7 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-const SERVER_NAME = "mi-mcp"; // <- cambia el nombre de tu MCP
+const SERVER_NAME = "mcp-finanzas-chile";
 const SERVER_VERSION = "1.0.0";
 
 const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
