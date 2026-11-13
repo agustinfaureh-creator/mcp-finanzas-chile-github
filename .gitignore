@@ -18,3 +18,8 @@ Thumbs.db
 /constructor.command
 /_respaldo_antes_de_cambios/
 diagnostico.txt
+
+# Datos reales de empresas: nunca al repositorio (solo el ejemplo ficticio)
+*.xlsx
+!ejemplos/demo-empresa.xlsx
+~$*
