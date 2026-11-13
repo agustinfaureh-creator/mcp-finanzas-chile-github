@@ -69,6 +69,8 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 | Herramienta | Qué hace | Cambia el Excel |
 |---|---|---|
 | `crear_plantilla_excel` | Crea el libro con las hojas **Empresa** (nombre, régimen) y **Movimientos**. No sobrescribe sin `confirmar: true`. | Crea |
+| `preparar_libro_existente` | Agrega las hojas Empresa y Movimientos a un Excel que ya tienes (p. ej. la planilla de un evento) sin tocar tus otras hojas. | Agrega 2 hojas |
+| `importar_gastos_desde_hoja` | Copia gastos desde otra hoja (p. ej. Honorarios), convirtiendo líquido a bruto si corresponde. Primero simula (`simular: true`). | Agrega filas |
 | `agregar_movimiento` | Agrega un ingreso o gasto; separa neto e IVA 19% según el documento. | Agrega fila |
 | `leer_movimientos_excel` | Lee la hoja y entrega totales, filas y advertencias de datos mal escritos. | No |
 | `calcular_eerr` | Estado de Resultados (mes, año o todo el libro) con impuesto de 1ª categoría estimado. | No |
@@ -114,7 +116,7 @@ Ver [`docs/entrega/03-declaracion-ia-limites-seguridad.md`](docs/entrega/03-decl
 
 ```
 src/index.ts            servidor MCP (carga src/tools/*)
-src/tools/finanzas.ts   las 6 herramientas de finanzas
+src/tools/finanzas.ts   las 8 herramientas de finanzas
 src/lib/tributario.ts   motor tributario (funciones puras y parámetros editables)
 src/lib/excel.ts        lectura/escritura del .xlsx
 tests/                  pruebas unitarias

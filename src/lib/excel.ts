@@ -48,6 +48,8 @@ function celdaTexto(v: ExcelJS.CellValue): string {
 }
 
 function celdaNumero(v: ExcelJS.CellValue): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && v !== null && "result" in v && typeof v.result === "number") return v.result;
   const t = celdaTexto(v).replace(/\$/g, "").replace(/\./g, "").replace(",", ".");
   const n = Number(t);
   return Number.isFinite(n) ? n : NaN;
@@ -207,4 +209,68 @@ export async function escribirInforme(ruta: string, eerr: EERR, pagos: PagosSII 
   }
   await wb.xlsx.writeFile(abs);
   return abs;
+}
+
+/** Agrega las hojas Empresa y Movimientos a un libro que ya existe, sin tocar las demas hojas. */
+export async function prepararLibroExistente(ruta: string, nombre: string, regimen: Regimen): Promise<string> {
+  const { wb, abs } = await abrirLibro(ruta);
+  if (wb.getWorksheet(HOJA_MOVS) || wb.getWorksheet(HOJA_EMPRESA))
+    throw new ErrorExcel(`El libro ya tiene las hojas "${HOJA_EMPRESA}" o "${HOJA_MOVS}". No se modificó nada.`);
+  const em = wb.addWorksheet(HOJA_EMPRESA);
+  em.addRow(["Empresa", nombre]);
+  em.addRow(["Régimen", regimen]);
+  em.getColumn(1).width = 20;
+  em.getColumn(2).width = 40;
+  em.getColumn(1).font = { bold: true };
+  const h = wb.addWorksheet(HOJA_MOVS);
+  h.addRow(ENCABEZADOS);
+  estiloEncabezado(h.getRow(1));
+  [14, 10, 22, 36, 14, 12, 16].forEach((w, i) => (h.getColumn(i + 1).width = w));
+  h.views = [{ state: "frozen", ySplit: 1 }];
+  await wb.xlsx.writeFile(abs);
+  return abs;
+}
+
+export interface FilaOrigen {
+  fila: number;
+  descripcion: string;
+  categoria: string;
+  monto: number;
+}
+
+/** Lee filas (descripcion, categoria opcional, monto) de otra hoja del libro. Salta vacias, subtotales y montos <= 0. */
+export async function leerHojaOrigen(
+  ruta: string,
+  hoja: string,
+  colDescripcion: string,
+  colMonto: string,
+  colCategoria: string | undefined,
+  desde: number,
+  hasta: number,
+): Promise<FilaOrigen[]> {
+  const { wb } = await abrirLibro(ruta);
+  const ws = wb.getWorksheet(hoja);
+  if (!ws) throw new ErrorExcel(`No existe la hoja "${hoja}". Hojas: ${wb.worksheets.map((w) => w.name).join(", ")}`);
+  const out: FilaOrigen[] = [];
+  for (let n = desde; n <= hasta; n++) {
+    const desc = celdaTexto(ws.getCell(`${colDescripcion}${n}`).value);
+    const monto = celdaNumero(ws.getCell(`${colMonto}${n}`).value);
+    if (!desc || desc === "-" || /^(sub)?total/i.test(desc) || !Number.isFinite(monto) || monto <= 0) continue;
+    out.push({ fila: n, descripcion: desc, categoria: colCategoria ? celdaTexto(ws.getCell(`${colCategoria}${n}`).value) : "", monto });
+  }
+  return out;
+}
+
+/** Agrega varias filas de una vez (un solo guardado del archivo). */
+export async function agregarFilas(ruta: string, movs: Movimiento[]): Promise<{ abs: string; agregadas: number }> {
+  const { wb, abs } = await abrirLibro(ruta);
+  const h = wb.getWorksheet(HOJA_MOVS);
+  if (!h) throw new ErrorExcel(`El libro no tiene la hoja "${HOJA_MOVS}". Usa preparar_libro_existente primero.`);
+  for (const m of movs) {
+    const f = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento]);
+    f.getCell(5).numFmt = "#,##0";
+    f.getCell(6).numFmt = "#,##0";
+  }
+  await wb.xlsx.writeFile(abs);
+  return { abs, agregadas: movs.length };
 }

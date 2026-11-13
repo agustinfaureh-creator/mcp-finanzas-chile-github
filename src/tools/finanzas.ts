@@ -8,10 +8,10 @@ import { existsSync } from "node:fs";
 import { z } from "zod";
 import { error, json, texto } from "../lib/respuestas.js";
 import {
-  ErrorExcel, abrirLibro, agregarFila, crearPlantilla, escribirInforme, leerEmpresa, leerMovimientos,
+  ErrorExcel, abrirLibro, agregarFila, agregarFilas, crearPlantilla, leerHojaOrigen, prepararLibroExistente, escribirInforme, leerEmpresa, leerMovimientos,
 } from "../lib/excel.js";
 import {
-  REGIMENES, calcularEERR, calcularPagosSII, fmt, separarIVA, validarFechaISO,
+  REGIMENES, calcularEERR, tasaRetencion, calcularPagosSII, fmt, separarIVA, validarFechaISO,
   type Documento, type Regimen,
 } from "../lib/tributario.js";
 
@@ -55,6 +55,65 @@ export function register(server: McpServer): void {
           return error("El archivo ya existe. Si quieres reemplazarlo, repite con confirmar: true.");
         const abs = await crearPlantilla(r, nombre_empresa, reg);
         return texto(`Plantilla creada en ${abs} (${REGIMENES[reg]}). Ya puedes registrar movimientos.`);
+      }),
+  );
+
+  server.registerTool(
+    "preparar_libro_existente",
+    {
+      title: "Preparar un Excel que ya existe",
+      description:
+        "Agrega las hojas Empresa y Movimientos a un libro Excel que ya tiene otras hojas (por ejemplo la planilla de un evento), sin modificar las hojas existentes. Falla si esas hojas ya existen.",
+      inputSchema: { ruta, nombre_empresa: z.string().describe("Nombre de la empresa"), regimen },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async ({ ruta: r, nombre_empresa, regimen: reg }) =>
+      seguro(async () => {
+        const abs = await prepararLibroExistente(r, nombre_empresa, reg);
+        return texto(`Hojas Empresa y Movimientos agregadas a ${abs}. Las demás hojas quedaron intactas.`);
+      }),
+  );
+
+  server.registerTool(
+    "importar_gastos_desde_hoja",
+    {
+      title: "Importar gastos desde otra hoja del Excel",
+      description:
+        "Copia filas de otra hoja del mismo libro (p. ej. una hoja Honorarios con nombre y monto) a Movimientos como gastos. Con monto_es_liquido_honorarios=true convierte el líquido a bruto de la boleta (líquido / (1 − retención)). Primero llámala con simular=true para ver qué se importaría.",
+      inputSchema: {
+        ruta,
+        hoja: z.string().describe("Nombre de la hoja de origen, p. ej. Honorarios"),
+        columna_descripcion: z.string().regex(/^[A-Za-z]{1,2}$/).describe("Letra de la columna con el nombre o detalle, p. ej. B"),
+        columna_monto: z.string().regex(/^[A-Za-z]{1,2}$/).describe("Letra de la columna con el monto, p. ej. E"),
+        columna_categoria: z.string().regex(/^[A-Za-z]{1,2}$/).optional().describe("Letra de la columna con la categoría de cada fila (opcional)"),
+        fila_desde: z.number().int().min(1).describe("Primera fila con datos"),
+        fila_hasta: z.number().int().min(1).describe("Última fila con datos"),
+        fecha: z.string().describe("Fecha AAAA-MM-DD que se asigna a todas las filas importadas"),
+        categoria_por_defecto: z.string().default("honorarios").describe("Categoría si la fila no trae una"),
+        documento: z.enum(["factura", "boleta", "honorarios", "exento", "sin_documento"]).default("honorarios").describe("Documento que respalda estos gastos"),
+        monto_es_liquido_honorarios: z.boolean().default(false).describe("true si el monto es el líquido que recibe la persona y hay que calcular el bruto"),
+        monto_incluye_iva: z.boolean().default(true).describe("Solo para factura/boleta: true si el monto ya trae IVA"),
+        simular: z.boolean().default(true).describe("true = solo muestra lo que se importaría; false = escribe en Movimientos"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async (a) =>
+      seguro(async () => {
+        if (!validarFechaISO(a.fecha)) return error("Fecha inválida. Usa AAAA-MM-DD.");
+        if (a.fila_hasta < a.fila_desde) return error("fila_hasta debe ser mayor o igual a fila_desde.");
+        if (a.fila_hasta - a.fila_desde > 2000) return error("Rango demasiado grande (máximo 2000 filas).");
+        const filas = await leerHojaOrigen(a.ruta, a.hoja, a.columna_descripcion.toUpperCase(), a.columna_monto.toUpperCase(), a.columna_categoria?.toUpperCase(), a.fila_desde, a.fila_hasta);
+        const tasa = tasaRetencion(Number(a.fecha.slice(0, 4)));
+        const movs = filas.map((f) => {
+          const monto = a.monto_es_liquido_honorarios ? Math.round(f.monto / (1 - tasa)) : f.monto;
+          const { neto, iva } = separarIVA(monto, a.documento as Documento, a.monto_incluye_iva);
+          return { fecha: a.fecha, tipo: "gasto" as const, categoria: f.categoria || a.categoria_por_defecto, descripcion: f.descripcion, neto, iva, documento: a.documento as Documento };
+        });
+        const totalNeto = movs.reduce((x, m) => x + m.neto, 0);
+        if (a.simular) return json({ simulacion: true, filas: movs.length, totalNeto, retencionAplicada: a.monto_es_liquido_honorarios ? tasa : undefined, ejemplo: movs.slice(0, 5) });
+        if (movs.length === 0) return error("No se encontraron filas con monto para importar.");
+        const res = await agregarFilas(a.ruta, movs);
+        return texto(`Importados ${res.agregadas} gastos (total neto ${fmt(totalNeto)}) a Movimientos de ${res.abs}.`);
       }),
   );
 
