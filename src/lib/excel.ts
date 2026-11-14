@@ -12,7 +12,7 @@ export const HOJA_MOVS = "Movimientos";
 export const HOJA_EMPRESA = "Empresa";
 export const HOJA_EERR = "EERR";
 export const HOJA_SII = "Pagos SII";
-export const ENCABEZADOS = ["Fecha", "Tipo", "Categoría", "Descripción", "Neto", "IVA", "Documento"];
+export const ENCABEZADOS = ["Fecha", "Tipo", "Categoría", "Descripción", "Neto", "IVA", "Documento", "Folio", "RUT contraparte"];
 const DOCS: Documento[] = ["factura", "boleta", "honorarios", "exento", "sin_documento"];
 
 export class ErrorExcel extends Error {}
@@ -96,6 +96,8 @@ export function leerMovimientos(wb: ExcelJS.Workbook): LecturaMovs {
       neto,
       iva: ivaCelda,
       documento: DOCS.includes(doc) ? doc : "exento",
+      folio: celdaTexto(row.getCell(8).value) || undefined,
+      rut: celdaTexto(row.getCell(9).value) || undefined,
     });
     if (!DOCS.includes(doc)) advertencias.push(`Fila ${n}: documento "${doc}" no reconocido, se trató como exento.`);
   });
@@ -131,7 +133,7 @@ export async function crearPlantilla(ruta: string, nombre: string, regimen: Regi
   const h = wb.addWorksheet(HOJA_MOVS);
   h.addRow(ENCABEZADOS);
   estiloEncabezado(h.getRow(1));
-  [14, 10, 22, 36, 14, 12, 16].forEach((w, i) => (h.getColumn(i + 1).width = w));
+  [14, 10, 22, 36, 14, 12, 16, 14, 16].forEach((w, i) => (h.getColumn(i + 1).width = w));
   h.views = [{ state: "frozen", ySplit: 1 }];
   h.getColumn(5).numFmt = "#,##0";
   h.getColumn(6).numFmt = "#,##0";
@@ -143,7 +145,8 @@ export async function agregarFila(ruta: string, m: Movimiento): Promise<{ abs: s
   const { wb, abs } = await abrirLibro(ruta);
   const h = wb.getWorksheet(HOJA_MOVS);
   if (!h) throw new ErrorExcel(`El libro no tiene la hoja "${HOJA_MOVS}".`);
-  const fila = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento]);
+  asegurarEncabezados(h);
+  const fila = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento, m.folio ?? "", m.rut ?? ""]);
   fila.getCell(5).numFmt = "#,##0";
   fila.getCell(6).numFmt = "#,##0";
   await wb.xlsx.writeFile(abs);
@@ -225,7 +228,7 @@ export async function prepararLibroExistente(ruta: string, nombre: string, regim
   const h = wb.addWorksheet(HOJA_MOVS);
   h.addRow(ENCABEZADOS);
   estiloEncabezado(h.getRow(1));
-  [14, 10, 22, 36, 14, 12, 16].forEach((w, i) => (h.getColumn(i + 1).width = w));
+  [14, 10, 22, 36, 14, 12, 16, 14, 16].forEach((w, i) => (h.getColumn(i + 1).width = w));
   h.views = [{ state: "frozen", ySplit: 1 }];
   await wb.xlsx.writeFile(abs);
   return abs;
@@ -266,11 +269,46 @@ export async function agregarFilas(ruta: string, movs: Movimiento[]): Promise<{ 
   const { wb, abs } = await abrirLibro(ruta);
   const h = wb.getWorksheet(HOJA_MOVS);
   if (!h) throw new ErrorExcel(`El libro no tiene la hoja "${HOJA_MOVS}". Usa preparar_libro_existente primero.`);
+  asegurarEncabezados(h);
   for (const m of movs) {
-    const f = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento]);
+    const f = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento, m.folio ?? "", m.rut ?? ""]);
     f.getCell(5).numFmt = "#,##0";
     f.getCell(6).numFmt = "#,##0";
   }
   await wb.xlsx.writeFile(abs);
   return { abs, agregadas: movs.length };
+}
+
+/** Libros creados antes de agregar Folio y RUT: completa los titulos que falten. */
+function asegurarEncabezados(h: ExcelJS.Worksheet): void {
+  ENCABEZADOS.forEach((t, i) => {
+    if (!celdaTexto(h.getRow(1).getCell(i + 1).value)) {
+      const c = h.getRow(1).getCell(i + 1);
+      c.value = t;
+      c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: AZUL } };
+    }
+  });
+}
+
+export async function escribirEERRMensual(ruta: string, filas: import("./tributario.js").EERRMes[], empresa: string): Promise<string> {
+  const { wb, abs } = await abrirLibro(ruta);
+  const h = hojaNueva(wb, "EERR mensual");
+  h.addRow([`EERR mensual — ${empresa}`]).font = { bold: true, size: 14 };
+  const enc = h.addRow(["Mes", "Ingresos netos", "Costo de ventas", "Margen bruto", "Gastos operacionales", "Gastos financieros", "Resultado antes de impuesto"]);
+  estiloEncabezado(enc);
+  h.columns.forEach((c) => (c.width = 22));
+  for (const f of filas) {
+    const r = h.addRow([f.mes, f.ingresos, f.costoVentas, f.margenBruto, f.gastosOperacionales, f.gastosFinancieros, f.resultadoAntesImpuesto]);
+    for (let c = 2; c <= 7; c++) r.getCell(c).numFmt = "#,##0;[Red]-#,##0";
+  }
+  const suma = (k: "ingresos" | "costoVentas" | "margenBruto" | "gastosOperacionales" | "gastosFinancieros" | "resultadoAntesImpuesto") =>
+    filas.reduce((a, f) => a + f[k], 0);
+  const t = h.addRow(["TOTAL", suma("ingresos"), suma("costoVentas"), suma("margenBruto"), suma("gastosOperacionales"), suma("gastosFinancieros"), suma("resultadoAntesImpuesto")]);
+  t.font = { bold: true };
+  for (let c = 2; c <= 7; c++) t.getCell(c).numFmt = "#,##0;[Red]-#,##0";
+  h.addRow([]);
+  h.addRow(["El impuesto de renta se calcula una vez al año: ver la hoja EERR (año completo)."]);
+  await wb.xlsx.writeFile(abs);
+  return abs;
 }

@@ -54,6 +54,19 @@ try {
     const sii = JSON.parse(await llamar("calcular_pagos_sii", { ruta, anio: 2026 }));
     if (sii.meses[0].ivaAPagar !== 95000) fallar("IVA a pagar inesperado");
     console.log(`OK: EERR e IVA calculados sobre Excel (margen bruto ${eerr.margenBruto}, IVA a pagar ${sii.meses[0].ivaAPagar}).`);
+    // Importar facturas del RCV: la segunda vez no debe duplicar.
+    const csv = path.resolve("ejemplos/rcv-compras-demo.csv");
+    const imp = JSON.parse(await llamar("importar_rcv_sii", { ruta, archivo_csv: csv, tipo: "compras", categoria: "costo_ventas", simular: false }));
+    if (imp.nuevas !== 3 || imp.escritas !== 3) fallar("importar_rcv_sii no escribio las 3 facturas");
+    const imp2 = JSON.parse(await llamar("importar_rcv_sii", { ruta, archivo_csv: csv, tipo: "compras", categoria: "costo_ventas", simular: false }));
+    if (imp2.nuevas !== 0) fallar("importar_rcv_sii duplico facturas");
+    const pp = JSON.parse(await llamar("proximos_pagos", { ruta, hoy: "2026-11-14" }));
+    if (!pp.proximos.some((x) => x.fecha === "2026-11-20")) fallar("proximos_pagos sin el F29 del 20-11");
+    const ics = path.join(dir, "pagos.ics");
+    await llamar("generar_calendario_pagos", { ruta_ics: ics, hoy: "2026-11-14" });
+    const mens = JSON.parse(await llamar("estado_resultados_mensual", { ruta, anio: 2026 }));
+    if (mens.meses.length < 2) fallar("EERR mensual incompleto");
+    console.log("OK: RCV sin duplicados, proximos pagos, calendario y EERR mensual.");
     const malo = await client.callTool({ name: "generar_informe_excel", arguments: { ruta: path.join(dir, "no-existe.xlsx"), anio: 2026, confirmar: true } });
     if (!malo.isError) fallar("debia devolver error con un archivo inexistente");
     console.log("OK: error controlado con archivo inexistente.");

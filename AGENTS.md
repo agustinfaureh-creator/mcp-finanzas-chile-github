@@ -9,6 +9,15 @@ Cuando el usuario hable de finanzas, ventas, gastos, IVA, F29, impuestos o del E
 - Después de registrar, ofrece recalcular con `calcular_eerr` y `calcular_pagos_sii`; `generar_informe_excel` reemplaza las hojas EERR y Pagos SII, así que pide confirmación.
 - Los resultados son **estimaciones**: recuerda que no reemplazan al SII ni a un contador, y señala los supuestos (régimen, PPM, entradas con IVA).
 - Cierra el Excel antes de escribir en él; si falla al abrir el archivo, díselo al usuario.
+## Rutina mensual de contabilidad
+
+1. Pídele al usuario que descargue desde Mi SII (sii.cl, Registro de Compras y Ventas) el CSV de **compras** y el de **ventas** del mes. No pidas ni uses su clave tributaria: este MCP no se conecta al SII.
+2. Importa cada CSV con `importar_rcv_sii` (`simular: true` primero). Avisa cuáles son las **facturas nuevas** (fecha, proveedor o cliente, monto).
+3. Pregunta la categoría de las compras nuevas (costo_ventas, arriendo, marketing, etc.) y registra los gastos sin factura.
+4. Entrega el estado de resultados del mes con `estado_resultados_mensual` y ofrece guardarlo en el Excel.
+5. Revisa `proximos_pagos` y recuerda lo que vence en los próximos 7 días, con monto estimado.
+6. Ofrece `generar_calendario_pagos` para dejar los vencimientos en el Calendario del usuario.
+
 - Para modificar el código del MCP usa las reglas de abajo.
 
 # Reglas del proyecto (para opencode y otros agentes)

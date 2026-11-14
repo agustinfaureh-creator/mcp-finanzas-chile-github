@@ -18,6 +18,9 @@ export interface Movimiento {
   neto: number;
   iva: number;
   documento: Documento;
+  /** Ej. "33-1234" (tipo de documento SII + folio). Sirve para no duplicar facturas. */
+  folio?: string;
+  rut?: string;
 }
 
 /** Parametros editables. Fuentes: SII, Ley 21.755, Ley 21.850 (revisadas nov 2026). */
@@ -347,4 +350,106 @@ export function validarFechaISO(f: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return false;
   const d = new Date(f + "T00:00:00Z");
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === f;
+}
+
+export interface EERRMes {
+  mes: string;
+  ingresos: number;
+  costoVentas: number;
+  margenBruto: number;
+  gastosOperacionales: number;
+  gastosFinancieros: number;
+  resultadoAntesImpuesto: number;
+}
+
+/** EERR mes a mes de un ano (sin impuesto: el impuesto de renta es anual). */
+export function eerrMensual(movs: Movimiento[], regimen: Regimen, anio: number): EERRMes[] {
+  const meses = [...new Set(movs.filter((m) => anioDe(m.fecha) === anio).map((m) => mesDe(m.fecha)))].sort();
+  return meses.map((mes) => {
+    const e = calcularEERR(movs, regimen, mes);
+    return {
+      mes,
+      ingresos: e.ingresos,
+      costoVentas: e.costoVentas,
+      margenBruto: e.margenBruto,
+      gastosOperacionales: e.gastosOperacionales,
+      gastosFinancieros: e.gastosFinancieros,
+      resultadoAntesImpuesto: e.resultadoAntesImpuesto,
+    };
+  });
+}
+
+export interface Recordatorio {
+  fecha: string;
+  concepto: string;
+  montoEstimado: number | null;
+  diasRestantes: number;
+  detalle: string;
+}
+
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+const sumaMes = (mes: string, n: number): string => {
+  const [y, m] = mes.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + n, 1));
+  return d.toISOString().slice(0, 7);
+};
+
+/** Proximos vencimientos (F29 de los ultimos meses con movimientos y F22 de abril) desde `hoy` (AAAA-MM-DD). */
+export function proximosPagos(movs: Movimiento[], regimen: Regimen, hoy: string, opts: { uta?: number } = {}): Recordatorio[] {
+  const out: Recordatorio[] = [];
+  const hoyD = new Date(hoy + "T00:00:00Z");
+  const dias = (f: string) => Math.round((new Date(f + "T00:00:00Z").getTime() - hoyD.getTime()) / 86_400_000);
+  const anios = [...new Set(movs.map((m) => anioDe(m.fecha)))];
+  const mesesF29 = new Map<string, number>();
+  for (const a of anios) {
+    for (const l of calcularPagosSII(movs, regimen, a, opts).meses) mesesF29.set(l.mes, l.totalF29);
+  }
+  // F29 de los meses recientes + los proximos 3 meses aunque aun no tengan datos
+  const mesActual = hoy.slice(0, 7);
+  for (let i = -2; i <= 3; i++) {
+    const mes = sumaMes(mesActual, i - 1); // el F29 del mes M se paga en M+1
+    const vence = fechaVencimiento(mes);
+    if (vence < hoy) continue;
+    const monto = mesesF29.get(mes);
+    out.push({
+      fecha: vence,
+      concepto: `F29 de ${mes} (IVA, PPM y retenciones)`,
+      montoEstimado: monto ?? null,
+      diasRestantes: dias(vence),
+      detalle: monto === undefined ? "Aún no hay movimientos de ese mes; el monto se calcula al cargar las facturas." : "Monto estimado con los movimientos cargados.",
+    });
+  }
+  const anioRenta = Number(hoy.slice(0, 4)) + (hoy.slice(5, 7) > "04" ? 1 : 0);
+  out.push({
+    fecha: `${anioRenta}-04-30`,
+    concepto: `Declaración de renta F22 (año comercial ${anioRenta - 1})`,
+    montoEstimado: null,
+    diasRestantes: dias(`${anioRenta}-04-30`),
+    detalle: "Fecha referencial (fin de abril): confirma el plazo exacto en sii.cl. En 14 D N°8 el impuesto lo pagan los socios.",
+  });
+  return out.sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
+/** Calendario .ics con recordatorios (3 dias y 1 dia antes) para importar en Calendario o Google Calendar. */
+export function generarICS(recs: Recordatorio[]): string {
+  const esc = (t: string) => t.replace(/[\\;,]/g, (c) => "\\" + c).replace(/\n/g, "\\n");
+  const lineas = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//mcp-finanzas-chile//ES", "CALSCALE:GREGORIAN"];
+  for (const r of recs) {
+    const d = r.fecha.replace(/-/g, "");
+    const fin = iso(new Date(new Date(r.fecha + "T00:00:00Z").getTime() + 86_400_000)).replace(/-/g, "");
+    lineas.push(
+      "BEGIN:VEVENT",
+      `UID:${d}-${Buffer.from(r.concepto).toString("hex").slice(0, 16)}@mcp-finanzas-chile`,
+      `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`,
+      `DTSTART;VALUE=DATE:${d}`,
+      `DTEND;VALUE=DATE:${fin}`,
+      `SUMMARY:${esc("Pagar al SII: " + r.concepto)}`,
+      `DESCRIPTION:${esc(r.detalle + " Revisa el monto en Mi SII antes de pagar.")}`,
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Vence en 3 dias", "TRIGGER:-P3D", "END:VALARM",
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Vence manana", "TRIGGER:-P1D", "END:VALARM",
+      "END:VEVENT",
+    );
+  }
+  lineas.push("END:VCALENDAR");
+  return lineas.join("\r\n") + "\r\n";
 }

@@ -8,6 +8,6 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 export PATH="$HOME/.mcp-starter-kit/node/bin:$HOME/.local/bin:$HOME/.opencode/bin:$HOME/.opencode-npm/bin:$PATH"
 if ! command -v node >/dev/null; then echo "Falta Node.js. Ejecuta primero Iniciar.command (instala todo)."; read -n 1 -s -r -p "Tecla para cerrar..."; exit 1; fi
 [ -d node_modules ] || npm install
-[ -f dist/index.js ] || npm run build
+npm run build --silent
 if ! command -v opencode >/dev/null; then echo "Falta opencode. Ejecuta primero Iniciar.command (lo instala y configura la IA)."; read -n 1 -s -r -p "Tecla para cerrar..."; exit 1; fi
 exec opencode

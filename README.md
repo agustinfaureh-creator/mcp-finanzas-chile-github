@@ -71,6 +71,10 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 | `crear_plantilla_excel` | Crea el libro con las hojas **Empresa** (nombre, régimen) y **Movimientos**. No sobrescribe sin `confirmar: true`. | Crea |
 | `preparar_libro_existente` | Agrega las hojas Empresa y Movimientos a un Excel que ya tienes (p. ej. la planilla de un evento) sin tocar tus otras hojas. | Agrega 2 hojas |
 | `importar_gastos_desde_hoja` | Copia gastos desde otra hoja (p. ej. Honorarios), convirtiendo líquido a bruto si corresponde. Primero simula (`simular: true`). | Agrega filas |
+| `importar_rcv_sii` | Lee el CSV del Registro de Compras y Ventas descargado de Mi SII y agrega solo las facturas **nuevas** (no duplica). Avisa cuáles llegaron. | Agrega filas |
+| `proximos_pagos` | Próximos vencimientos (F29 y renta) con días restantes y monto estimado. | No |
+| `generar_calendario_pagos` | Crea un `.ics` con recordatorios de pago para el Calendario. | Crea archivo |
+| `estado_resultados_mensual` | EERR de cada mes del año; opcionalmente lo escribe en la hoja "EERR mensual". | Reemplaza 1 hoja |
 | `agregar_movimiento` | Agrega un ingreso o gasto; separa neto e IVA 19% según el documento. | Agrega fila |
 | `leer_movimientos_excel` | Lee la hoja y entrega totales, filas y advertencias de datos mal escritos. | No |
 | `calcular_eerr` | Estado de Resultados (mes, año o todo el libro) con impuesto de 1ª categoría estimado. | No |
@@ -94,6 +98,16 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 4. *"Calcula el EERR de 2026 de `ejemplos/demo-empresa.xlsx`."*
 5. *"¿Cuánto tengo que pagar al SII por mes y cuándo vence?"*
 6. *"Escribe el informe 2026 en el mismo Excel."*
+
+## Rutina mensual (llevar la contabilidad al día)
+
+1. En Mi SII (sii.cl) entra a **Registro de Compras y Ventas** y descarga el detalle en CSV de compras y de ventas del mes.
+2. Pídele a la IA: *"importa las compras de este CSV"* y luego las ventas. Te avisa las facturas nuevas.
+3. Clasifica las compras nuevas y registra los gastos sin factura.
+4. Pídele el **EERR del mes** y los **próximos pagos**.
+5. Una vez: *"genera el calendario de pagos"* y abre el `.ics` para recibir alarmas en tu Calendario.
+
+**Importante: el MCP no se conecta directamente al SII.** El SII no ofrece una API abierta para empresas pequeñas, y automatizar el ingreso a Mi SII exigiría guardar la clave tributaria, lo que es un riesgo de seguridad. Por eso trabaja con el CSV que descargas tú. Tampoco envía notificaciones por sí solo: los recordatorios salen del calendario `.ics`.
 
 ## Cómo calcula (resumen)
 
