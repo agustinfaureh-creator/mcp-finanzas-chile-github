@@ -12,7 +12,7 @@ export const HOJA_MOVS = "Movimientos";
 export const HOJA_EMPRESA = "Empresa";
 export const HOJA_EERR = "EERR";
 export const HOJA_SII = "Pagos SII";
-export const ENCABEZADOS = ["Fecha", "Tipo", "Categoría", "Descripción", "Neto", "IVA", "Documento", "Folio", "RUT contraparte"];
+export const ENCABEZADOS = ["Fecha", "Tipo", "Categoría", "Descripción", "Neto", "IVA", "Documento", "Folio", "RUT contraparte", "Período IVA"];
 const DOCS: Documento[] = ["factura", "boleta", "honorarios", "exento", "sin_documento"];
 
 export class ErrorExcel extends Error {}
@@ -98,18 +98,27 @@ export function leerMovimientos(wb: ExcelJS.Workbook): LecturaMovs {
       documento: DOCS.includes(doc) ? doc : "exento",
       folio: celdaTexto(row.getCell(8).value) || undefined,
       rut: celdaTexto(row.getCell(9).value) || undefined,
+      periodoIva: /^\d{4}-\d{2}$/.test(celdaTexto(row.getCell(10).value)) ? celdaTexto(row.getCell(10).value) : undefined,
     });
     if (!DOCS.includes(doc)) advertencias.push(`Fila ${n}: documento "${doc}" no reconocido, se trató como exento.`);
   });
   return { movimientos, advertencias };
 }
 
-export function leerEmpresa(wb: ExcelJS.Workbook): { nombre: string; regimen: Regimen } {
+export function leerEmpresa(wb: ExcelJS.Workbook): { nombre: string; regimen: Regimen; tasaPPM?: number } {
   const h = wb.getWorksheet(HOJA_EMPRESA);
   const nombre = h ? celdaTexto(h.getCell("B1").value) : "";
   const reg = h ? celdaTexto(h.getCell("B2").value).toUpperCase().replace(/\s/g, "") : "";
   const regimen: Regimen = reg === "14A" || reg === "14D3" || reg === "14D8" ? reg : "14D3";
-  return { nombre: nombre || "Mi empresa", regimen };
+  // Fila opcional "PPM %" con la tasa que propone el SII (ej. 0,1 significa 0,1%).
+  let tasaPPM: number | undefined;
+  h?.eachRow((row) => {
+    if (/^ppm/i.test(celdaTexto(row.getCell(1).value))) {
+      const v = celdaNumero(row.getCell(2).value);
+      if (Number.isFinite(v) && v >= 0 && v <= 5) tasaPPM = v / 100;
+    }
+  });
+  return { nombre: nombre || "Mi empresa", regimen, tasaPPM };
 }
 
 const AZUL = "FF1F3864";
@@ -118,7 +127,7 @@ function estiloEncabezado(row: ExcelJS.Row) {
   row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: AZUL } };
 }
 
-export async function crearPlantilla(ruta: string, nombre: string, regimen: Regimen): Promise<string> {
+export async function crearPlantilla(ruta: string, nombre: string, regimen: Regimen, ppmPorcentaje?: number): Promise<string> {
   const abs = validarRuta(ruta);
   await mkdir(path.dirname(abs), { recursive: true });
   const wb = new ExcelJS.Workbook();
@@ -126,6 +135,7 @@ export async function crearPlantilla(ruta: string, nombre: string, regimen: Regi
   em.addRow(["Empresa", nombre]);
   em.addRow(["Régimen", regimen]);
   em.addRow(["Regímenes válidos", "14A (general), 14D3 (Pro Pyme general), 14D8 (Pro Pyme transparente)"]);
+  em.addRow(["PPM %", ppmPorcentaje ?? "", "Tasa de PPM que te propone el SII en el F29 (ej. 0,1). Vacío = tasa de referencia del régimen."]);
   em.getColumn(1).width = 20;
   em.getColumn(2).width = 40;
   em.getColumn(1).font = { bold: true };
@@ -133,7 +143,7 @@ export async function crearPlantilla(ruta: string, nombre: string, regimen: Regi
   const h = wb.addWorksheet(HOJA_MOVS);
   h.addRow(ENCABEZADOS);
   estiloEncabezado(h.getRow(1));
-  [14, 10, 22, 36, 14, 12, 16, 14, 16].forEach((w, i) => (h.getColumn(i + 1).width = w));
+  [14, 10, 22, 36, 14, 12, 16, 14, 16, 12].forEach((w, i) => (h.getColumn(i + 1).width = w));
   h.views = [{ state: "frozen", ySplit: 1 }];
   h.getColumn(5).numFmt = "#,##0";
   h.getColumn(6).numFmt = "#,##0";
@@ -146,7 +156,7 @@ export async function agregarFila(ruta: string, m: Movimiento): Promise<{ abs: s
   const h = wb.getWorksheet(HOJA_MOVS);
   if (!h) throw new ErrorExcel(`El libro no tiene la hoja "${HOJA_MOVS}".`);
   asegurarEncabezados(h);
-  const fila = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento, m.folio ?? "", m.rut ?? ""]);
+  const fila = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento, m.folio ?? "", m.rut ?? "", m.periodoIva ?? ""]);
   fila.getCell(5).numFmt = "#,##0";
   fila.getCell(6).numFmt = "#,##0";
   await wb.xlsx.writeFile(abs);
@@ -228,7 +238,7 @@ export async function prepararLibroExistente(ruta: string, nombre: string, regim
   const h = wb.addWorksheet(HOJA_MOVS);
   h.addRow(ENCABEZADOS);
   estiloEncabezado(h.getRow(1));
-  [14, 10, 22, 36, 14, 12, 16, 14, 16].forEach((w, i) => (h.getColumn(i + 1).width = w));
+  [14, 10, 22, 36, 14, 12, 16, 14, 16, 12].forEach((w, i) => (h.getColumn(i + 1).width = w));
   h.views = [{ state: "frozen", ySplit: 1 }];
   await wb.xlsx.writeFile(abs);
   return abs;
@@ -271,7 +281,7 @@ export async function agregarFilas(ruta: string, movs: Movimiento[]): Promise<{ 
   if (!h) throw new ErrorExcel(`El libro no tiene la hoja "${HOJA_MOVS}". Usa preparar_libro_existente primero.`);
   asegurarEncabezados(h);
   for (const m of movs) {
-    const f = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento, m.folio ?? "", m.rut ?? ""]);
+    const f = h.addRow([m.fecha, m.tipo === "ingreso" ? "Ingreso" : "Gasto", m.categoria, m.descripcion, m.neto, m.iva, m.documento, m.folio ?? "", m.rut ?? "", m.periodoIva ?? ""]);
     f.getCell(5).numFmt = "#,##0";
     f.getCell(6).numFmt = "#,##0";
   }
@@ -311,4 +321,57 @@ export async function escribirEERRMensual(ruta: string, filas: import("./tributa
   h.addRow(["El impuesto de renta se calcula una vez al año: ver la hoja EERR (año completo)."]);
   await wb.xlsx.writeFile(abs);
   return abs;
+}
+
+export const HOJA_PAGOS = "Pagos registrados";
+export interface PagoRegistrado {
+  periodo: string;
+  concepto: string;
+  monto: number;
+  estado: "pagado" | "pendiente";
+  fechaPago: string;
+  nota: string;
+}
+
+export function leerPagos(wb: ExcelJS.Workbook): PagoRegistrado[] {
+  const h = wb.getWorksheet(HOJA_PAGOS);
+  if (!h) return [];
+  const out: PagoRegistrado[] = [];
+  h.eachRow((row, n) => {
+    if (n === 1) return;
+    const concepto = celdaTexto(row.getCell(2).value);
+    if (!concepto) return;
+    out.push({
+      periodo: celdaTexto(row.getCell(1).value),
+      concepto,
+      monto: celdaNumero(row.getCell(3).value) || 0,
+      estado: celdaTexto(row.getCell(4).value).toLowerCase().startsWith("pag") ? "pagado" : "pendiente",
+      fechaPago: normalizarFecha(row.getCell(5).value),
+      nota: celdaTexto(row.getCell(6).value),
+    });
+  });
+  return out;
+}
+
+/** Agrega un pago o pendiente; si ya existe el mismo periodo+concepto, actualiza esa fila. */
+export async function registrarPago(ruta: string, p: PagoRegistrado): Promise<{ abs: string; actualizado: boolean }> {
+  const { wb, abs } = await abrirLibro(ruta);
+  let h = wb.getWorksheet(HOJA_PAGOS);
+  if (!h) {
+    h = wb.addWorksheet(HOJA_PAGOS);
+    h.addRow(["Período", "Concepto", "Monto", "Estado", "Fecha de pago", "Nota"]);
+    estiloEncabezado(h.getRow(1));
+    [12, 40, 14, 12, 14, 50].forEach((w, i) => (h!.getColumn(i + 1).width = w));
+  }
+  let fila: ExcelJS.Row | undefined;
+  h.eachRow((row, n) => {
+    if (n > 1 && celdaTexto(row.getCell(1).value) === p.periodo && celdaTexto(row.getCell(2).value).toLowerCase() === p.concepto.toLowerCase()) fila = row;
+  });
+  const valores = [p.periodo, p.concepto, p.monto, p.estado, p.fechaPago, p.nota];
+  const actualizado = fila !== undefined;
+  if (fila) valores.forEach((v, i) => (fila!.getCell(i + 1).value = v));
+  else fila = h.addRow(valores);
+  fila.getCell(3).numFmt = "#,##0";
+  await wb.xlsx.writeFile(abs);
+  return { abs, actualizado };
 }

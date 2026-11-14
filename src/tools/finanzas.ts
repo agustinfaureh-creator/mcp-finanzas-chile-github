@@ -23,7 +23,7 @@ async function contexto(r: string, reg?: Regimen) {
   const { wb } = await abrirLibro(r);
   const emp = leerEmpresa(wb);
   const { movimientos, advertencias } = leerMovimientos(wb);
-  return { empresa: emp.nombre, regimen: reg ?? emp.regimen, movimientos, advertencias };
+  return { empresa: emp.nombre, regimen: reg ?? emp.regimen, tasaPPM: emp.tasaPPM, movimientos, advertencias };
 }
 
 async function seguro<T>(f: () => Promise<T>) {
@@ -45,15 +45,16 @@ export function register(server: McpServer): void {
         ruta,
         nombre_empresa: z.string().describe("Nombre de la empresa"),
         regimen,
+        ppm_porcentaje: z.number().min(0).max(5).optional().describe("Tasa de PPM que propone el SII, en porcentaje (ej. 0.1 para 0,1%). Opcional"),
         confirmar: z.literal(true).optional().describe("Enviar true solo si el archivo ya existe y se acepta sobrescribirlo"),
       },
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
-    async ({ ruta: r, nombre_empresa, regimen: reg, confirmar }) =>
+    async ({ ruta: r, nombre_empresa, regimen: reg, confirmar, ppm_porcentaje }) =>
       seguro(async () => {
         if (existsSync(r) && confirmar !== true)
           return error("El archivo ya existe. Si quieres reemplazarlo, repite con confirmar: true.");
-        const abs = await crearPlantilla(r, nombre_empresa, reg);
+        const abs = await crearPlantilla(r, nombre_empresa, reg, ppm_porcentaje);
         return texto(`Plantilla creada en ${abs} (${REGIMENES[reg]}). Ya puedes registrar movimientos.`);
       }),
   );
@@ -132,16 +133,22 @@ export function register(server: McpServer): void {
         monto: z.number().positive().describe("Monto en pesos chilenos"),
         documento: z.enum(["factura", "boleta", "honorarios", "exento", "sin_documento"]).describe("Documento que respalda el movimiento"),
         monto_incluye_iva: z.boolean().default(true).describe("true si el monto ya trae el IVA incluido (total); false si es el neto"),
+        iva_exacto: z.number().min(0).optional().describe("IVA exacto del documento si no es el 19% del neto (p. ej. facturas con ILA: el monto es el costo neto + ILA y aquí va solo el IVA)"),
+        folio: z.string().optional().describe("Tipo de documento SII y folio, p. ej. 33-7959 (evita duplicar al importar el RCV)"),
+        rut: z.string().optional().describe("RUT de la empresa contraparte"),
+        periodo_iva: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("AAAA-MM en que el SII incluye este IVA en el F29, si difiere del mes de la fecha"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false },
     },
     async (a) =>
       seguro(async () => {
         if (!validarFechaISO(a.fecha)) return error("Fecha inválida. Usa el formato AAAA-MM-DD, por ejemplo 2026-11-05.");
-        const { neto, iva } = separarIVA(a.monto, a.documento as Documento, a.monto_incluye_iva);
+        const sep = separarIVA(a.monto, a.documento as Documento, a.monto_incluye_iva);
+        const neto = sep.neto;
+        const iva = a.iva_exacto ?? sep.iva;
         const res = await agregarFila(a.ruta, {
           fecha: a.fecha, tipo: a.tipo, categoria: a.categoria, descripcion: a.descripcion,
-          neto, iva, documento: a.documento as Documento,
+          neto, iva, documento: a.documento as Documento, folio: a.folio, rut: a.rut, periodoIva: a.periodo_iva,
         });
         return texto(`Registrado en la fila ${res.fila}: ${a.tipo} de ${fmt(neto)} neto + ${fmt(iva)} IVA (${a.documento}).`);
       }),
@@ -216,7 +223,7 @@ export function register(server: McpServer): void {
     async ({ ruta: r, anio, regimen: reg, uta, valor_uf }) =>
       seguro(async () => {
         const c = await contexto(r, reg);
-        const res = calcularPagosSII(c.movimientos, c.regimen, anio, { uta, valorUF: valor_uf });
+        const res = calcularPagosSII(c.movimientos, c.regimen, anio, { uta, valorUF: valor_uf, tasaPPM: c.tasaPPM });
         if (res.meses.length === 0) return error(`No hay movimientos del año ${anio}.`);
         return json({ empresa: c.empresa, ...res, advertencias: c.advertencias });
       }),
@@ -241,7 +248,7 @@ export function register(server: McpServer): void {
         const c = await contexto(r, reg);
         if (c.movimientos.length === 0) return error("No hay movimientos para informar.");
         const eerr = calcularEERR(c.movimientos, c.regimen, String(anio));
-        const pagos = calcularPagosSII(c.movimientos, c.regimen, anio);
+        const pagos = calcularPagosSII(c.movimientos, c.regimen, anio, { tasaPPM: c.tasaPPM });
         const abs = await escribirInforme(r, eerr, pagos, c.empresa);
         return texto(`Listo: hojas "EERR" y "Pagos SII" escritas en ${abs}. Resultado neto ${fmt(eerr.resultadoNeto)}; total F29 del año ${fmt(pagos.totalF29)}.`);
       }),

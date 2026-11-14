@@ -21,6 +21,8 @@ export interface Movimiento {
   /** Ej. "33-1234" (tipo de documento SII + folio). Sirve para no duplicar facturas. */
   folio?: string;
   rut?: string;
+  /** AAAA-MM en que el IVA de este documento entra al F29, si es distinto al mes de la fecha (lo define el SII con el acuse). */
+  periodoIva?: string;
 }
 
 /** Parametros editables. Fuentes: SII, Ley 21.755, Ley 21.850 (revisadas nov 2026). */
@@ -40,7 +42,7 @@ export const PARAMETROS = {
   ppm: {
     "14A": 0.01, // variable por empresa (IDPC / ingresos del ano anterior); 1% = referencia del primer ano
     "14D3": { hasta50000UF: 0.00125, sobre50000UF: 0.0025 },
-    "14D8": { hasta50000UF: 0.002, sobre50000UF: 0.005 },
+    "14D8": { hasta50000UF: 0.001, sobre50000UF: 0.0025 }, // tasa transitoria rebajada; el SII la propone en el F29
   },
   uf50000: 50000,
   /** Impuesto Global Complementario: tramos en multiplos de UTA (limite superior, tasa, rebaja en UTA). */
@@ -255,20 +257,23 @@ export function igcPorBase(baseEnPesos: number, uta: number): number {
   return Math.max(0, redondear((enUTA * tramo.tasa - tramo.rebaja) * uta));
 }
 
-export function calcularPagosSII(movs: Movimiento[], regimen: Regimen, anio: number, opts: { uta?: number; valorUF?: number } = {}): PagosSII {
+export function calcularPagosSII(movs: Movimiento[], regimen: Regimen, anio: number, opts: { uta?: number; valorUF?: number; tasaPPM?: number } = {}): PagosSII {
   const delAnio = movs.filter((m) => anioDe(m.fecha) === anio);
-  const meses = [...new Set(delAnio.map((m) => mesDe(m.fecha)))].sort();
+  const mesIva = (m: Movimiento) => m.periodoIva ?? mesDe(m.fecha);
+  const paraIva = movs.filter((m) => Number(mesIva(m).slice(0, 4)) === anio);
+  const meses = [...new Set([...delAnio.map((m) => mesDe(m.fecha)), ...paraIva.map(mesIva)])].sort();
   const ingresosAnio = delAnio.filter((m) => m.tipo === "ingreso").reduce((a, m) => a + m.neto, 0);
   const ingresosUF = opts.valorUF ? ingresosAnio / opts.valorUF : undefined;
-  const tasaP = tasaPPM(regimen, ingresosUF);
+  const tasaP = opts.tasaPPM ?? tasaPPM(regimen, ingresosUF);
   const tasaRet = tasaRetencion(anio);
 
   const lineas: F29Mes[] = [];
   let remanente = 0;
   for (const mes of meses) {
     const mm = delAnio.filter((m) => mesDe(m.fecha) === mes);
-    const ivaDebito = mm.filter((m) => m.tipo === "ingreso").reduce((a, m) => a + m.iva, 0);
-    const ivaCredito = mm.filter((m) => m.tipo === "gasto" && m.documento !== "sin_documento").reduce((a, m) => a + m.iva, 0);
+    const mi = paraIva.filter((m) => mesIva(m) === mes);
+    const ivaDebito = mi.filter((m) => m.tipo === "ingreso").reduce((a, m) => a + m.iva, 0);
+    const ivaCredito = mi.filter((m) => m.tipo === "gasto" && m.documento !== "sin_documento").reduce((a, m) => a + m.iva, 0);
     const ingresosNetos = mm.filter((m) => m.tipo === "ingreso").reduce((a, m) => a + m.neto, 0);
     const retencion = redondear(
       mm.filter((m) => m.tipo === "gasto" && m.documento === "honorarios").reduce((a, m) => a + m.neto, 0) * tasaRet,
@@ -395,7 +400,7 @@ const sumaMes = (mes: string, n: number): string => {
 };
 
 /** Proximos vencimientos (F29 de los ultimos meses con movimientos y F22 de abril) desde `hoy` (AAAA-MM-DD). */
-export function proximosPagos(movs: Movimiento[], regimen: Regimen, hoy: string, opts: { uta?: number } = {}): Recordatorio[] {
+export function proximosPagos(movs: Movimiento[], regimen: Regimen, hoy: string, opts: { uta?: number; tasaPPM?: number } = {}): Recordatorio[] {
   const out: Recordatorio[] = [];
   const hoyD = new Date(hoy + "T00:00:00Z");
   const dias = (f: string) => Math.round((new Date(f + "T00:00:00Z").getTime() - hoyD.getTime()) / 86_400_000);

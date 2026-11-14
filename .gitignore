@@ -23,3 +23,7 @@ diagnostico.txt
 *.xlsx
 !ejemplos/demo-empresa.xlsx
 ~$*
+
+# Datos privados de la empresa del usuario
+CONTEXTO_EMPRESA.md
+*.ics

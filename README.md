@@ -73,6 +73,7 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 | `importar_gastos_desde_hoja` | Copia gastos desde otra hoja (p. ej. Honorarios), convirtiendo líquido a bruto si corresponde. Primero simula (`simular: true`). | Agrega filas |
 | `importar_rcv_sii` | Lee el CSV del Registro de Compras y Ventas descargado de Mi SII y agrega solo las facturas **nuevas** (no duplica). Avisa cuáles llegaron. | Agrega filas |
 | `proximos_pagos` | Próximos vencimientos (F29 y renta) con días restantes y monto estimado. | No |
+| `registrar_pago_sii` | Anota pagos hechos o pendientes (F29, giros, multas) en la hoja "Pagos registrados"; así no se avisa lo ya pagado. | Agrega/actualiza fila |
 | `generar_calendario_pagos` | Crea un `.ics` con recordatorios de pago para el Calendario. | Crea archivo |
 | `estado_resultados_mensual` | EERR de cada mes del año; opcionalmente lo escribe en la hoja "EERR mensual". | Reemplaza 1 hoja |
 | `agregar_movimiento` | Agrega un ingreso o gasto; separa neto e IVA 19% según el documento. | Agrega fila |
@@ -112,7 +113,8 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 ## Cómo calcula (resumen)
 
 - **IVA mensual** = IVA débito (ventas) − IVA crédito (compras con factura) − remanente del mes anterior. Si da negativo, queda como remanente.
-- **PPM** = tasa × ingresos netos del mes (14 D N°3: 0,125%; 14 D N°8: 0,2%; 14 A: 1% de referencia). Son parámetros de `src/lib/tributario.ts`.
+- **PPM** = tasa × ingresos netos del mes (14 D N°3: 0,125%; 14 D N°8: 0,1%; 14 A: 1% de referencia). Si el SII te propone otra tasa, escríbela en la fila `PPM %` de la hoja Empresa.
+- **Período de IVA**: si el SII incluye una factura en un mes distinto al de su fecha (acuse de recibo, Pendientes), indícalo en la columna `Período IVA` (AAAA-MM).
 - **Retención de honorarios**: 15,25% del bruto en 2026 (16% en 2027, 17% desde 2028).
 - **Impuesto de 1ª categoría**: 14 A 27% (2026) / 25,5% (2027); 14 D N°3 12,5% (transitorio); 14 D N°8 no paga: la base se atribuye a los dueños (IGC).
 - Los gastos `sin_documento` no dan crédito de IVA ni se aceptan como gasto tributario.

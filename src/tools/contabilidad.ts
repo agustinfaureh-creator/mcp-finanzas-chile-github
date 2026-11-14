@@ -9,7 +9,7 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { error, json, texto } from "../lib/respuestas.js";
-import { ErrorExcel, abrirLibro, agregarFilas, escribirEERRMensual, leerEmpresa, leerMovimientos } from "../lib/excel.js";
+import { ErrorExcel, abrirLibro, agregarFilas, escribirEERRMensual, leerEmpresa, leerMovimientos, leerPagos, registrarPago } from "../lib/excel.js";
 import { claveDoc, parsearRCV } from "../lib/rcv.js";
 import { eerrMensual, fmt, generarICS, proximosPagos, validarFechaISO, type Regimen } from "../lib/tributario.js";
 
@@ -28,7 +28,7 @@ async function datos(r: string, reg?: Regimen) {
   const { wb } = await abrirLibro(r);
   const emp = leerEmpresa(wb);
   const { movimientos, advertencias } = leerMovimientos(wb);
-  return { empresa: emp.nombre, regimen: (reg ?? emp.regimen) as Regimen, movimientos, advertencias };
+  return { empresa: emp.nombre, regimen: (reg ?? emp.regimen) as Regimen, tasaPPM: emp.tasaPPM, movimientos, advertencias, pagos: leerPagos(wb) };
 }
 
 export function register(server: McpServer): void {
@@ -91,9 +91,46 @@ export function register(server: McpServer): void {
         const ref = hoy ?? new Date().toISOString().slice(0, 10);
         if (!validarFechaISO(ref)) return error("Fecha inválida. Usa AAAA-MM-DD.");
         const c = await datos(r, reg);
-        const recs = proximosPagos(c.movimientos, c.regimen, ref);
-        const urgentes = recs.filter((x) => x.diasRestantes <= 7).map((x) => `${x.concepto}: vence en ${x.diasRestantes} días (${x.fecha})${x.montoEstimado !== null ? ", estimado " + fmt(x.montoEstimado) : ""}`);
-        return json({ empresa: c.empresa, hoy: ref, urgentes, proximos: recs, aviso: "Montos estimados con tus datos; confirma en Mi SII antes de pagar." });
+        const pagados = new Set(c.pagos.filter((p) => p.estado === "pagado").map((p) => p.periodo));
+        const recs = proximosPagos(c.movimientos, c.regimen, ref, { tasaPPM: c.tasaPPM }).map((x) => {
+          const per = /F29 de (\d{4}-\d{2})/.exec(x.concepto)?.[1];
+          return { ...x, estado: per && pagados.has(per) ? "pagado" : "por pagar" };
+        });
+        const porPagar = recs.filter((x) => x.estado === "por pagar");
+        const urgentes = porPagar.filter((x) => x.diasRestantes <= 7).map((x) => `${x.concepto}: vence en ${x.diasRestantes} días (${x.fecha})${x.montoEstimado !== null ? ", estimado " + fmt(x.montoEstimado) : ""}`);
+        const pendientes = c.pagos.filter((p) => p.estado === "pendiente");
+        return json({
+          empresa: c.empresa, hoy: ref, urgentes, proximos: recs,
+          pendientesRegistrados: pendientes,
+          totalPendientesRegistrados: pendientes.reduce((a, p) => a + p.monto, 0),
+          aviso: "Montos estimados con tus datos; confirma en Mi SII antes de pagar.",
+        });
+      }),
+  );
+
+  server.registerTool(
+    "registrar_pago_sii",
+    {
+      title: "Registrar un pago hecho o pendiente",
+      description:
+        "Anota en la hoja 'Pagos registrados' un pago ya hecho al SII (p. ej. el F29 de un mes) o un pendiente (giro, multa, rectificación, pago a proveedor). Así proximos_pagos no avisa de lo ya pagado. Si ya existe el mismo período y concepto, actualiza esa fila.",
+      inputSchema: {
+        ruta,
+        periodo: z.string().describe("Período AAAA-MM al que corresponde (para un F29, el mes declarado)"),
+        concepto: z.string().describe("Qué es, p. ej. 'F29', 'Giro multa folio 123', 'Rectificar F29'"),
+        monto: z.number().min(0).describe("Monto en pesos (0 si aún no se conoce)"),
+        estado: z.enum(["pagado", "pendiente"]).describe("pagado o pendiente"),
+        fecha_pago: z.string().optional().describe("Fecha del pago AAAA-MM-DD (solo si está pagado)"),
+        nota: z.string().optional().describe("Detalle libre"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async (a) =>
+      seguro(async () => {
+        if (!/^\d{4}-\d{2}$/.test(a.periodo)) return error("Período inválido. Usa AAAA-MM.");
+        if (a.fecha_pago && !validarFechaISO(a.fecha_pago)) return error("Fecha de pago inválida. Usa AAAA-MM-DD.");
+        const res = await registrarPago(a.ruta, { periodo: a.periodo, concepto: a.concepto, monto: a.monto, estado: a.estado, fechaPago: a.fecha_pago ?? "", nota: a.nota ?? "" });
+        return texto(`${res.actualizado ? "Actualizado" : "Registrado"}: ${a.concepto} ${a.periodo}, ${fmt(a.monto)}, ${a.estado}.`);
       }),
   );
 
