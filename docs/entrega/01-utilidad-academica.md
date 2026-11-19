@@ -9,6 +9,7 @@
 **Para quién.** Emprendedores y estudiantes que llevan las cuentas de su propio negocio sin ser contadores; socios que quieren entender sus números antes de declarar o de hablar con un contador; y compañeros del curso, que pueden clonar el repositorio y usarlo con su planilla.
 
 **Dimensión de aprendizaje.**
+
 - *Finanzas:* relación entre ingresos, costos, margen y resultado; diferencia entre resultado contable y base imponible; cómo funcionan IVA, remanente, PPM, retenciones y renta por régimen.
 - *Ingeniería y uso responsable de IA:* diseñar herramientas MCP con descripciones claras, validación de entradas, confirmación antes de sobrescribir y pruebas automáticas; separar lo que calcula el código de lo que redacta la IA.
 - *Pensamiento crítico:* cada tasa es un parámetro visible y editable con sus fuentes y límites, de modo que la persona puede discutir el supuesto en vez de aceptar una caja negra.
