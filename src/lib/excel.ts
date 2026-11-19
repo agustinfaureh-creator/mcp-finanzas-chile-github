@@ -114,6 +114,7 @@ export function leerEmpresa(wb: ExcelJS.Workbook): { nombre: string; regimen: Re
   let tasaPPM: number | undefined;
   h?.eachRow((row) => {
     if (/^ppm/i.test(celdaTexto(row.getCell(1).value))) {
+      if (celdaTexto(row.getCell(2).value) === "") return; // vacio = tasa de referencia del regimen
       const v = celdaNumero(row.getCell(2).value);
       if (Number.isFinite(v) && v >= 0 && v <= 5) tasaPPM = v / 100;
     }

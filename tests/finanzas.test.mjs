@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { calcularEERR, calcularPagosSII, separarIVA, tasaRetencion, fechaVencimiento, igcPorBase } from "../dist/lib/tributario.js";
-import { crearPlantilla, agregarFila, abrirLibro, leerMovimientos, escribirInforme, validarRuta } from "../dist/lib/excel.js";
+import { crearPlantilla, agregarFila, abrirLibro, leerMovimientos, escribirInforme, validarRuta, leerEmpresa } from "../dist/lib/excel.js";
 
 const mov = (fecha, tipo, categoria, neto, iva, documento) => ({ fecha, tipo, categoria, descripcion: "", neto, iva, documento });
 const base = [
@@ -115,4 +115,18 @@ test("Excel: crear, agregar, leer y escribir informe", async () => {
 
 test("solo acepta archivos .xlsx", () => {
   assert.throws(() => validarRuta("/tmp/secreto.txt"));
+});
+
+test("hoja Empresa: PPM % vacio usa la tasa del regimen; con valor usa ese valor", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "fin-"));
+  try {
+    const a = path.join(dir, "a.xlsx");
+    await crearPlantilla(a, "Vacia", "14D3");
+    assert.equal(leerEmpresa((await abrirLibro(a)).wb).tasaPPM, undefined);
+    const b = path.join(dir, "b.xlsx");
+    await crearPlantilla(b, "Con PPM", "14D8", 0.1);
+    assert.equal(leerEmpresa((await abrirLibro(b)).wb).tasaPPM, 0.001);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -1,6 +1,8 @@
 # MCP Finanzas Chile
 
-Servidor **MCP (Model Context Protocol)** que conecta una IA (opencode, Claude Desktop, Cursor…) con **Microsoft Excel** para llevar las finanzas de una empresa chilena: tú registras **ingresos y gastos** en una planilla y la IA te entrega el **Estado de Resultados (EERR)** y **lo que hay que pagar al SII** (IVA/F29, PPM, retención de honorarios y renta anual).
+Servidor **MCP (Model Context Protocol)** que conecta una IA (opencode, Claude Desktop, Cursor…) con **Excel** (archivos `.xlsx`) para llevar la contabilidad de una empresa chilena: registras **ingresos y gastos** (a mano o importando las facturas del Registro de Compras y Ventas del SII) y la IA te entrega el **Estado de Resultados (EERR)** mensual y anual, **lo que hay que pagar al SII** (IVA/F29, PPM, retención de honorarios y renta anual) y los **próximos vencimientos**.
+
+Los cálculos los hace código con pruebas, no el modelo: la IA entiende el pedido, llama a la herramienta y explica el resultado. Se validó contra un F29 real ya declarado de una pyme: el MCP calculó el mismo total que el SII, al peso.
 
 Proyecto individual del examen *"MCP para una herramienta de su computadora"*. Está construido sobre el [`mcp-starter-kit`](https://github.com/Maurichilean3d/mcp-starter-kit) del curso (rama `main`).
 
@@ -11,6 +13,8 @@ Proyecto individual del examen *"MCP para una herramienta de su computadora"*. E
 | Antes (a mano) | Con el MCP |
 |---|---|
 | Sumar facturas, separar IVA, armar el EERR y buscar qué se paga al SII en varias planillas | Le dices a la IA *"calcula el EERR y lo que debo pagar de 2026"* y lo hace sobre **tu** archivo Excel |
+| Revisar a mano qué facturas nuevas llegaron al SII | Descargas el CSV del RCV y la IA importa solo las nuevas y te avisa cuáles son |
+| Acordarse de cuándo vence el F29 | La IA lista lo que vence y crea recordatorios en tu Calendario |
 
 Regímenes soportados: **14 A** (general), **14 D N°3** (Pro Pyme general) y **14 D N°8** (Pro Pyme transparente).
 
@@ -30,6 +34,8 @@ npm run build
 npm test          # debe terminar con: "Prueba de humo superada."
 npm run demo      # crea ejemplos/demo-empresa.xlsx con datos ficticios
 ```
+
+En Mac también puedes hacer doble clic en `Iniciar.command` (instala Node y opencode la primera vez) y después en `Contador.command` (compila y abre opencode con el MCP conectado).
 
 ### Conectarlo a opencode
 
@@ -66,6 +72,8 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 
 ## Herramientas
 
+13 herramientas de finanzas, en dos archivos (`finanzas.ts`: libro y cálculos; `contabilidad.ts`: rutina mensual), más 2 del starter kit.
+
 | Herramienta | Qué hace | Cambia el Excel |
 |---|---|---|
 | `crear_plantilla_excel` | Crea el libro con las hojas **Empresa** (nombre, régimen) y **Movimientos**. No sobrescribe sin `confirmar: true`. | Crea |
@@ -85,10 +93,12 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 
 ### Formato de la hoja `Movimientos`
 
-`Fecha (AAAA-MM-DD) · Tipo (ingreso/gasto) · Categoría · Descripción · Neto · IVA · Documento`
+`Fecha (AAAA-MM-DD) · Tipo (ingreso/gasto) · Categoría · Descripción · Neto · IVA · Documento · Folio · RUT contraparte · Período IVA`
 
 - **Documento**: `factura`, `boleta`, `honorarios`, `exento` o `sin_documento`.
 - Categorías con tratamiento especial: `costo_ventas` (costo de ventas) y `financiero` (gastos financieros). El resto son gastos operacionales.
+- `Folio`, `RUT contraparte` y `Período IVA` son opcionales. El folio (p. ej. `33-1234`) evita duplicar facturas al importar el RCV.
+- En la hoja **Empresa**, la fila `PPM %` guarda la tasa de PPM que te propone el SII.
 - Puedes escribir las filas a mano en Excel o pedirle a la IA que use `agregar_movimiento`.
 
 ## Ejemplos de uso (lo que le dices a la IA)
@@ -99,6 +109,9 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 4. *"Calcula el EERR de 2026 de `ejemplos/demo-empresa.xlsx`."*
 5. *"¿Cuánto tengo que pagar al SII por mes y cuándo vence?"*
 6. *"Escribe el informe 2026 en el mismo Excel."*
+7. *"Importa las compras de `ejemplos/rcv-compras-demo.csv`"* (CSV ficticio con el formato del RCV).
+8. *"¿Qué vence en los próximos días?"* y *"ya pagué el F29 de octubre, $850.000"*.
+9. *"Dame el estado de resultados mes a mes de 2026."*
 
 ## Rutina mensual (llevar la contabilidad al día)
 
@@ -122,19 +135,23 @@ Reinicia el cliente. No hay claves, tokens ni variables de entorno que configura
 
 ## Seguridad y límites
 
-Ver [`docs/entrega/03-declaracion-ia-limites-seguridad.md`](docs/entrega/03-declaracion-ia-limites-seguridad.md). En corto: solo abre archivos `.xlsx` que tú indiques, no usa red ni claves, pide confirmación antes de sobrescribir y el repo no contiene datos reales (el Excel de ejemplo es ficticio).
+Ver [`docs/entrega/03-declaracion-ia-limites-seguridad.md`](docs/entrega/03-declaracion-ia-limites-seguridad.md). En corto: solo abre los archivos `.xlsx`, `.csv` e `.ics` que tú indiques, no usa red ni claves, no se conecta al SII, pide confirmación antes de sobrescribir y el repo no contiene datos reales (el Excel de ejemplo es ficticio).
 
 ## Pruebas
 
-`npm test` compila, corre 12 pruebas unitarias (valores calculados a mano) y la prueba de humo que arranca el servidor MCP y recorre las herramientas sobre un Excel temporal.
+`npm test` compila, corre 20 pruebas unitarias (valores calculados a mano, incluido un caso que reproduce un F29 real) y la prueba de humo que arranca el servidor MCP y recorre las herramientas sobre un Excel temporal: crea el libro, registra movimientos, calcula EERR e IVA, importa el RCV dos veces sin duplicar, lista próximos pagos, crea el calendario y el EERR mensual.
 
 ## Estructura
 
 ```
 src/index.ts            servidor MCP (carga src/tools/*)
-src/tools/finanzas.ts   las 8 herramientas de finanzas
-src/lib/tributario.ts   motor tributario (funciones puras y parámetros editables)
-src/lib/excel.ts        lectura/escritura del .xlsx
+src/tools/finanzas.ts       libro Excel, EERR y pagos SII (8 herramientas)
+src/tools/contabilidad.ts   RCV, próximos pagos, pagos registrados, calendario, EERR mensual (5)
+src/tools/aplicaciones.ts   del starter kit: listar y abrir apps
+src/lib/tributario.ts       motor tributario (funciones puras y parámetros editables)
+src/lib/excel.ts            lectura/escritura del .xlsx
+src/lib/rcv.ts              lector del CSV del Registro de Compras y Ventas
+ejemplos/                   Excel y CSV ficticios para probar
 tests/                  pruebas unitarias
 scripts/                prueba de humo y generador de datos de ejemplo
 docs/entrega/           documentos del examen
